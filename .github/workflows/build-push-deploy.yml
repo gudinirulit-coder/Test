@@ -68,6 +68,11 @@ jobs:
           envs: IMAGE,GHCR_USER,GHCR_TOKEN
           script: |
             set -euo pipefail
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "docker не найден в PATH на сервере. Установите Docker Engine и убедитесь, что пользователь SSH может запускать docker (группа docker или root)."
+              echo "Проверка: ssh на сервер и выполните: docker --version"
+              exit 1
+            fi
             if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USER:-}" ]; then
               echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             fi
