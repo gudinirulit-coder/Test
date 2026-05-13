@@ -1,4 +1,4 @@
-from datetime import datetime, time as time_cls, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
@@ -7,9 +7,8 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Test Time API", version="0.1.0")
 
-
-SUPPORTED_TIMEZONES = {
-    # Russian names and aliases → IANA tz IDs
+TIMEZONE_ALIASES = {
+    # Русские названия и алиасы → IANA tz ID
     "екатеринбург": "Asia/Yekaterinburg",
     "yekaterinburg": "Asia/Yekaterinburg",
     "ekaterinburg": "Asia/Yekaterinburg",
@@ -19,14 +18,18 @@ SUPPORTED_TIMEZONES = {
 
 
 class TimeConvertRequest(BaseModel):
-    time: str
+    # Желаемый часовой пояс: IANA id (например 'Europe/London', 'Asia/Yekaterinburg')
+    # или один из русских алиасов из TIMEZONE_ALIASES.
     timezone: str
+    # Если задать `time`, то оно будет интерпретировано как HH:MM в UTC.
+    # Если `time` не задан — берём текущее время сервера (UTC на момент запроса).
+    time: str | None = None
 
 
 @app.get("/")
 def root():
     return {
-        "message": "Эндпоинты: /time — время, /date — дата UTC, /date/local — дата в локальной TZ сервера",
+        "message": "Эндпоинты: /time — время UTC, /date — дата UTC, /date/local — дата локальная, /convert-time — конвертация текущего UTC или HH:MM в выбранный TZ (IANA timezone).",
     }
 
 
@@ -73,30 +76,51 @@ def convert_time(payload: TimeConvertRequest):
 
     Примеры тела запроса:
     {
+      "timezone": "Asia/Yekaterinburg"
+    }
+
+    Можно также использовать русские алиасы (не все города):
+    {
+      "timezone": "Екатеринбург"
+    }
+
+    (необязательно) если нужно конвертировать конкретное время:
+    {
       "time": "15:00",
       "timezone": "Екатеринбург"
     }
     """
+    tz_input = payload.timezone.strip()
+    tz_key = tz_input.lower()
+    tz_id = TIMEZONE_ALIASES.get(tz_key, tz_input)
+
     try:
-        parsed_time = datetime.strptime(payload.time, "%H:%M").time()
-    except ValueError:
+        target_tz = ZoneInfo(tz_id)
+    except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail="Некорректный формат времени. Используйте HH:MM, например '15:00'.",
+            detail=(
+                f"Не удалось распознать часовой пояс '{payload.timezone}'. "
+                "Укажите IANA timezone (например 'Europe/London', 'Asia/Tokyo', 'Asia/Yekaterinburg') "
+                "или один из алиасов: "
+                f"{', '.join(sorted(TIMEZONE_ALIASES.keys()))}. "
+                f"Техническая ошибка: {e}"
+            ),
         )
 
-    tz_key = payload.timezone.strip().lower()
-    if tz_key not in SUPPORTED_TIMEZONES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Неизвестный часовой пояс '{payload.timezone}'. "
-            f"Поддерживаемые варианты: {', '.join(sorted(SUPPORTED_TIMEZONES.keys()))}",
-        )
+    if payload.time:
+        try:
+            parsed_time = datetime.strptime(payload.time, "%H:%M").time()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректный формат времени. Используйте HH:MM, например '15:00'.",
+            )
+        today_utc = datetime.now(timezone.utc).date()
+        dt_utc = datetime.combine(today_utc, parsed_time, tzinfo=timezone.utc)
+    else:
+        dt_utc = datetime.now(timezone.utc)
 
-    today_utc = datetime.now(timezone.utc).date()
-    dt_utc = datetime.combine(today_utc, parsed_time, tzinfo=timezone.utc)
-
-    target_tz = ZoneInfo(SUPPORTED_TIMEZONES[tz_key])
     dt_target = dt_utc.astimezone(target_tz)
 
     return {
