@@ -29,7 +29,57 @@ class TimeConvertRequest(BaseModel):
 @app.get("/")
 def root():
     return {
-        "message": "Эндпоинты: /time — время UTC, /date — дата UTC, /date/local — дата локальная, /convert-time — конвертация текущего UTC или HH:MM в выбранный TZ (IANA timezone).",
+        "message": "Эндпоинты: /time — время UTC, /date — дата UTC, /date/local — дата локальная, /convert-time — конвертация текущего UTC (и/или указанного HH:MM) в выбранный TZ (IANA timezone).",
+    }
+
+
+def _convert_time(time_str: str | None, timezone_str: str) -> dict:
+    tz_input = timezone_str.strip()
+    tz_key = tz_input.lower()
+    tz_id = TIMEZONE_ALIASES.get(tz_key, tz_input)
+
+    try:
+        target_tz = ZoneInfo(tz_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Не удалось распознать часовой пояс '{timezone_str}'. "
+                "Укажите IANA timezone (например 'Europe/London', 'Asia/Tokyo', 'Asia/Yekaterinburg') "
+                "или один из алиасов: "
+                f"{', '.join(sorted(TIMEZONE_ALIASES.keys()))}. "
+                f"Техническая ошибка: {e}"
+            ),
+        )
+
+    if time_str:
+        try:
+            parsed_time = datetime.strptime(time_str, "%H:%M").time()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректный формат времени. Используйте HH:MM, например '15:00'.",
+            )
+        today_utc = datetime.now(timezone.utc).date()
+        dt_utc = datetime.combine(today_utc, parsed_time, tzinfo=timezone.utc)
+    else:
+        # Берём текущее серверное время (UTC) на момент запроса.
+        dt_utc = datetime.now(timezone.utc)
+
+    dt_target = dt_utc.astimezone(target_tz)
+    return {
+        "input": {
+            "time": time_str,
+            "timezone": timezone_str,
+            "assumed_zone": "UTC",
+        },
+        "utc": dt_utc.isoformat(),
+        "converted": {
+            "time": dt_target.strftime("%H:%M"),
+            "iso": dt_target.isoformat(),
+            "timezone": target_tz.key,
+            "utc_offset": dt_target.strftime("%z"),
+        },
     }
 
 
@@ -69,6 +119,20 @@ def server_time():
     }
 
 
+@app.get("/convert-time")
+def convert_time_get(time: str | None = None, timezone: str = ""):
+    """
+    GET-вариант для удобства в Swagger:
+    - `timezone` (обязателен): IANA id или русский алиас (если поддержан)
+    - `time` (опционален): HH:MM, трактуется как время в UTC
+
+    Если `time` не передан — конвертируем текущее серверное UTC время.
+    """
+    if not timezone:
+        raise HTTPException(status_code=400, detail="Параметр 'timezone' обязателен.")
+    return _convert_time(time, timezone)
+
+
 @app.post("/convert-time")
 def convert_time(payload: TimeConvertRequest):
     """
@@ -90,50 +154,4 @@ def convert_time(payload: TimeConvertRequest):
       "timezone": "Екатеринбург"
     }
     """
-    tz_input = payload.timezone.strip()
-    tz_key = tz_input.lower()
-    tz_id = TIMEZONE_ALIASES.get(tz_key, tz_input)
-
-    try:
-        target_tz = ZoneInfo(tz_id)
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Не удалось распознать часовой пояс '{payload.timezone}'. "
-                "Укажите IANA timezone (например 'Europe/London', 'Asia/Tokyo', 'Asia/Yekaterinburg') "
-                "или один из алиасов: "
-                f"{', '.join(sorted(TIMEZONE_ALIASES.keys()))}. "
-                f"Техническая ошибка: {e}"
-            ),
-        )
-
-    if payload.time:
-        try:
-            parsed_time = datetime.strptime(payload.time, "%H:%M").time()
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="Некорректный формат времени. Используйте HH:MM, например '15:00'.",
-            )
-        today_utc = datetime.now(timezone.utc).date()
-        dt_utc = datetime.combine(today_utc, parsed_time, tzinfo=timezone.utc)
-    else:
-        dt_utc = datetime.now(timezone.utc)
-
-    dt_target = dt_utc.astimezone(target_tz)
-
-    return {
-        "input": {
-            "time": payload.time,
-            "timezone": payload.timezone,
-            "assumed_zone": "UTC",
-        },
-        "utc": dt_utc.isoformat(),
-        "converted": {
-            "time": dt_target.strftime("%H:%M"),
-            "iso": dt_target.isoformat(),
-            "timezone": target_tz.key,
-            "utc_offset": dt_target.strftime("%z"),
-        },
-    }
+    return _convert_time(payload.time, payload.timezone)

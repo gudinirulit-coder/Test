@@ -24,7 +24,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 | GET | `/time` | Текущее время в UTC (`utc`, `unix`) |
 | GET | `/date` | Дата по календарю UTC |
 | GET | `/date/local` | Дата в локальной зоне сервера |
-| POST | `/convert-time` | Конвертация времени из UTC в выбранный TZ: по умолчанию берётся текущее время сервера; опционально можно передать `time: "HH:MM"`; TZ задаётся IANA id (например `Europe/London`) или русским алиасом (если поддержан) |
+| GET | `/convert-time` | Конвертация времени из UTC в выбранный TZ: `timezone` обязателен (IANA id или алиас), `time` (опционально) — HH:MM в UTC |
+| POST | `/convert-time` | То же самое, но через JSON: `{ "timezone": "...", "time": "HH:MM" }` (время необязательно) |
 
 ## Docker
 
